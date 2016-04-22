@@ -1,4 +1,4 @@
-FROM phusion/baseimage:0.9.15
+FROM ubuntu:14.04
 
 # Ensure UTF-8
 RUN locale-gen en_US.UTF-8
@@ -7,38 +7,65 @@ ENV LC_ALL     en_US.UTF-8
 
 ENV HOME /root
 
-RUN /etc/my_init.d/00_regen_ssh_host_keys.sh
-
-CMD ["/sbin/my_init"]
-
 # Nginx-PHP Installation
 RUN apt-get update
-RUN DEBIAN_FRONTEND="noninteractive" apt-get install -y vim curl wget build-essential python-software-properties
-RUN add-apt-repository -y ppa:ondrej/php5
+RUN DEBIAN_FRONTEND="noninteractive" apt-get install -y vim curl wget build-essential python-software-properties git
+RUN DEBIAN_FRONTEND="noninteractive" apt-get install -y python-software-properties software-properties-common
+RUN add-apt-repository  ppa:ondrej/php
 RUN add-apt-repository -y ppa:nginx/stable
 RUN apt-get update
-RUN DEBIAN_FRONTEND="noninteractive" apt-get install -y --force-yes php5-cli php5-fpm php5-mysql php5-pgsql php5-sqlite php5-curl\
-		       php5-gd php5-mcrypt php5-intl php5-imap php5-tidy
+RUN DEBIAN_FRONTEND="noninteractive" apt-get install -y --force-yes \
+		libcurl4-gnutls-dev libpng-dev libmcrypt-dev libsqlite3-dev \
+		php7.0 php7.0-fpm php7.0-mysql \
+		php7.0-cli php7.0-pgsql php7.0-sqlite php7.0-curl \
+		php7.0-gd php7.0-mcrypt php7.0-intl php7.0-imap php7.0-tidy
 
-RUN sed -i "s/;date.timezone =.*/date.timezone = UTC/" /etc/php5/fpm/php.ini
-RUN sed -i "s/;date.timezone =.*/date.timezone = UTC/" /etc/php5/cli/php.ini
+# Change your php settings in php.ini and copy it to the right path.
+COPY php.ini /usr/local/etc/php/php.ini
+RUN  ln -s /usr/sbin/php-fpm7.0 /usr/sbin/php-fpm
 
+# install nginx 
 RUN DEBIAN_FRONTEND="noninteractive" apt-get install -y nginx
+COPY nginx.conf /etc/nginx/nginx.conf
 
-RUN echo "daemon off;" >> /etc/nginx/nginx.conf
-RUN sed -i -e "s/;daemonize\s*=\s*yes/daemonize = no/g" /etc/php5/fpm/php-fpm.conf
-RUN sed -i "s/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/" /etc/php5/fpm/php.ini
- 
-RUN mkdir -p        /var/www
-ADD build/default   /etc/nginx/sites-available/default
-RUN mkdir           /etc/service/nginx
-ADD build/nginx.sh  /etc/service/nginx/run
-RUN chmod +x        /etc/service/nginx/run
-RUN mkdir           /etc/service/phpfpm
-ADD build/phpfpm.sh /etc/service/phpfpm/run
-RUN chmod +x        /etc/service/phpfpm/run
+# setup supervisord 
+RUN DEBIAN_FRONTEND="noninteractive" apt-get install -y supervisor sudo
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-EXPOSE 80
-# End Nginx-PHP
+# setup sshd
+RUN DEBIAN_FRONTEND="noninteractive" apt-get install -y	ssh openssh-server pwgen
+RUN sed -i 's/UsePAM yes/UsePAM no/g' /etc/ssh/sshd_config
+#COPY ./run.sh /run.sh
+#RUN chmod 0755 /run.sh
 
+RUN useradd admin
+RUN echo "admin:admin" | chpasswd
+RUN echo "admin   ALL=(ALL)       ALL" >> /etc/sudoers
+
+RUN ssh-keygen -t dsa -f /etc/ssh/ssh_host_dsa_key -y
+RUN ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -y
+
+
+# setup log path 
+RUN mkdir /var/run/sshd
+# log for supervisor 
+RUN mkdir -p /var/log/supervisor
+#set up sock path  for php-fpm7.0
+RUN mkdir -p /run/php
+# clean 
 RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+
+#setup for website 
+RUN mkdir -p	/www
+RUN mkdir -p	/www-data
+
+COPY www/index.php /www/index.php	
+#set up ssh user 
+#CMD ["/run.sh"]
+
+
+
+VOLUME ["/www"]
+EXPOSE 22 80 443 
+CMD ["/usr/bin/supervisord"]
